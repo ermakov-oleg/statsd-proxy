@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 use async_std::net::UdpSocket;
 use hash_ring::HashRing;
-use log::{debug, info, warn};
+use log::{debug, error, warn};
 use structopt::StructOpt;
 use trust_dns_resolver::Resolver;
 
@@ -26,10 +26,6 @@ async fn main() -> Result<(), std::io::Error> {
 
 #[derive(Debug, StructOpt)]
 struct Serve {
-    /// Activate debug mode
-    #[structopt(short, long)]
-    debug: bool,
-
     /// Run on host
     #[structopt(short, long, default_value = "127.0.0.1")]
     host: String,
@@ -133,7 +129,9 @@ async fn proxy(params: Serve) -> std::io::Result<()> {
         if let Some(key_size) = &buf[..recv].iter().position(|x| *x == b':') {
             let key = String::from_utf8_lossy(&buf[..*key_size]);
             let node = hash_ring.get_node(key.parse().unwrap()).unwrap();
-            node.send(&socket, &buf[..recv]).await?;
+            node.send(&socket, &buf[..recv])
+                .await
+                .unwrap_or_else(|e| error!("Error when send stats to {:?} Err: {:?}", node, e));
 
             debug!("[node] {:?} | key -> {:?}", node, key,)
         } else {

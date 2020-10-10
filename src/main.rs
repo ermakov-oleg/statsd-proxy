@@ -125,20 +125,19 @@ async fn proxy(params: Serve) -> std::io::Result<()> {
 
     loop {
         let (recv, _) = socket.recv_from(&mut buf).await?;
+        let chunk = String::from_utf8_lossy(&buf[..recv]);
+        for metric in chunk.split('\n').filter(|&x| !x.is_empty()) {
+            if let Some(key_size) = metric.find(':') {
+                let key = &metric[..key_size];
+                let node = hash_ring.get_node(key.parse().unwrap()).unwrap();
+                node.send(&socket, metric.as_bytes())
+                    .await
+                    .unwrap_or_else(|e| error!("Error when send stats to {:?} Err: {:?}", node, e));
 
-        if let Some(key_size) = &buf[..recv].iter().position(|x| *x == b':') {
-            let key = String::from_utf8_lossy(&buf[..*key_size]);
-            let node = hash_ring.get_node(key.parse().unwrap()).unwrap();
-            node.send(&socket, &buf[..recv])
-                .await
-                .unwrap_or_else(|e| error!("Error when send stats to {:?} Err: {:?}", node, e));
-
-            debug!("[node] {:?} | key -> {:?}", node, key,)
-        } else {
-            debug!(
-                "Invalid metric format {:?}",
-                String::from_utf8_lossy(&buf[..recv - 1])
-            )
+                debug!("[node] {:?} | key -> {:?}", node, key,)
+            } else {
+                debug!("Invalid metric format {:?}", metric)
+            }
         }
     }
 }

@@ -40,6 +40,7 @@ jobs:
           VERSION=edge
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
+          fi
           TAGS="${DOCKER_IMAGE}:${VERSION}"
           echo ::set-output name=version::${VERSION}
           echo ::set-output name=tags::${TAGS}

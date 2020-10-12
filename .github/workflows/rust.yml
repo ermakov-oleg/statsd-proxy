@@ -23,6 +23,3 @@ jobs:
       run: cargo clippy --all-targets --all-features
     - name: Run tests
       run: cargo test --verbose
-
-  publish:
-    if: startsWith(github.event.ref, 'refs/tags')

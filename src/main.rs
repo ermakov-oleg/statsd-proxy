@@ -36,7 +36,7 @@ struct Serve {
 
     /// List of statsd hosts (host:port)
     #[structopt(short, long)]
-    statsd_host: Vec<String>,
+    statsd_host: Vec<Host>,
 }
 
 #[derive(Debug, StructOpt)]
@@ -52,6 +52,7 @@ struct ApplicationArguments {
     command: Command,
 }
 
+#[derive(Debug)]
 struct Host {
     host: String,
     port: u16,
@@ -73,15 +74,14 @@ impl FromStr for Host {
     }
 }
 
-async fn prepare_statsd_hosts(hosts: Vec<String>) -> Result<Vec<StatsdNode>, String> {
+async fn prepare_statsd_hosts(hosts: Vec<Host>) -> Result<Vec<StatsdNode>, String> {
     let resolver = Resolver::from_system_conf().unwrap();
 
     let mut nodes = vec![];
 
-    for host_raw in hosts {
-        let host: Host = host_raw.parse()?;
+    for host in hosts {
         let response = resolver.lookup_ip(&host.host).map_err(|e| e.to_string())?;
-        warn!("Resolving {}", &host_raw);
+        warn!("Resolving {:?}", &host);
         for addr in response {
             warn!("    {:?}", addr);
             nodes.push(StatsdNode::new(SocketAddr::from((addr, host.port))));

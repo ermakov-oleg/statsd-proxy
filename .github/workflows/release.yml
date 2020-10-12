@@ -32,6 +32,8 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          cache-from: type=registry,ref=ermakov-oleg/statsd-proxy:latest
+          cache-to: type=inline
           tags: |
             ghcr.io/ermakov-oleg/statsd-proxy:latest
 

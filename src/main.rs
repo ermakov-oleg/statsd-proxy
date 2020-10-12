@@ -74,7 +74,7 @@ impl FromStr for Host {
 }
 
 async fn prepare_statsd_hosts(hosts: Vec<String>) -> Result<Vec<StatsdNode>, String> {
-    let resolver = Resolver::default().unwrap();
+    let resolver = Resolver::from_system_conf().unwrap();
 
     let mut nodes = vec![];
 

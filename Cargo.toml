@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 # common
 async-std = { version = "1.6.5", features = ["attributes"] }
+futures = { version="0.3.6", features = ["async-await"]}
 
 # cli
 structopt = "0.3.19"
@@ -17,5 +18,5 @@ structopt = "0.3.19"
 log = { version = "0.4", features = ["std", "serde", "max_level_debug", "release_max_level_info"] }
 env_logger = "0.7.1"
 
-hash_ring = "0.1.7"
+hashring = "0.2.0"
 trust-dns-resolver = "0.19.5"

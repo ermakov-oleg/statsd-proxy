@@ -47,11 +47,11 @@ pub async fn proxy(params: Serve) -> Result<()> {
 
 async fn split_stream(nodes: Vec<StatsdNode>, metrics: &mut Receiver<String>) {
     let mut ring: HashRing<StatsdNode> = HashRing::new();
-    let mut rx_map: HashMap<StatsdNode, Sender<String>> = HashMap::new();
+    let mut sender_map: HashMap<StatsdNode, Sender<String>> = HashMap::new();
 
     for node in nodes {
         let (sender, receiver) = mpsc::unbounded::<String>();
-        rx_map.insert(node.clone(), sender);
+        sender_map.insert(node.clone(), sender);
         ring.add(node.clone());
 
         let _handle = task::spawn(send_to_node(node, receiver));
@@ -67,7 +67,7 @@ async fn split_stream(nodes: Vec<StatsdNode>, metrics: &mut Receiver<String>) {
                 Some(n) => {
                     debug!("[node] {:?} | key -> {:?}", n, &key);
 
-                    match rx_map.get(n) {
+                    match sender_map.get(n) {
                         Some(mut sender) => sender.send(metric).await.unwrap(),
                         None => error!("Sender not found"),
                     };

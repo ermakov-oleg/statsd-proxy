@@ -33,7 +33,8 @@ pub struct Serve {
     pub statsd_host: Vec<Host>,
 }
 
-async fn prepare_listen(params: Serve) -> Result<()> {
+pub async fn proxy(params: Serve) -> Result<()> {
+    // todo: graceful shutdown
     let nodes = prepare_statsd_hosts(params.statsd_host).await.unwrap();
 
     let (sender, mut receiver) = mpsc::unbounded::<String>();
@@ -110,14 +111,6 @@ async fn listen(addr: impl ToSocketAddrs, mut sender: Sender<String>) -> Result<
         }
     }
 }
-
-pub async fn proxy(params: Serve) -> Result<()> {
-    prepare_listen(params).await?;
-    Ok(())
-}
-
-#[derive(Debug)]
-enum Void {} // 1
 
 async fn prepare_statsd_hosts(hosts: Vec<Host>) -> std::result::Result<Vec<StatsdNode>, String> {
     if hosts.is_empty() {

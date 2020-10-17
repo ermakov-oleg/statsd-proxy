@@ -155,7 +155,7 @@ impl FromStr for Host {
     }
 }
 
-#[derive(Debug, Clone, Hash, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct StatsdNode {
     addrs: SocketAddr,
 }
@@ -174,11 +174,5 @@ impl StatsdNode {
 impl ToString for StatsdNode {
     fn to_string(&self) -> String {
         format!("{}:{}", self.addrs.ip(), self.addrs.port())
-    }
-}
-
-impl PartialEq for StatsdNode {
-    fn eq(&self, other: &StatsdNode) -> bool {
-        self.addrs == other.addrs
     }
 }

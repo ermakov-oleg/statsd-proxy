@@ -19,4 +19,5 @@ log = { version = "0.4", features = ["std", "serde", "max_level_debug", "release
 env_logger = "0.7.1"
 
 hashring = "0.2.0"
+fasthash = "0.4.0"
 trust-dns-resolver = "0.19.5"

@@ -2,11 +2,13 @@
 
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::net::SocketAddr;
 use std::str::FromStr;
 
 use async_std::net::{ToSocketAddrs, UdpSocket};
 use async_std::task;
+use fasthash::murmur3;
 use futures::{channel::mpsc, FutureExt, SinkExt, StreamExt};
 use hashring::HashRing;
 use log::{debug, error, warn};
@@ -46,7 +48,7 @@ pub async fn proxy(params: Serve) -> Result<()> {
 }
 
 async fn split_stream(nodes: Vec<StatsdNode>, metrics: &mut Receiver<String>) {
-    let mut ring: HashRing<StatsdNode> = HashRing::new();
+    let mut ring: HashRing<StatsdNode, murmur3::Hash32> = HashRing::with_hasher(murmur3::Hash32);
     let mut sender_map: HashMap<StatsdNode, Sender<String>> = HashMap::new();
 
     for node in nodes {
@@ -102,14 +104,21 @@ async fn listen(addr: impl ToSocketAddrs, mut sender: Sender<String>) -> Result<
 
     let mut buf = vec![0u8; 1024 * 5];
 
-    loop {
+    // todo: make correct stop
+    'outer: loop {
         let (recv, _) = socket.recv_from(&mut buf).await?;
         let chunk = String::from_utf8_lossy(&buf[..recv]);
         for metric in chunk.split('\n').filter(|&x| !x.is_empty()) {
+            if metric.eq("<stop>") {
+                break 'outer;
+            }
+
             debug!("Received {:?}", metric);
             sender.send(metric.parse().unwrap()).await?;
         }
     }
+
+    Ok(())
 }
 
 async fn prepare_statsd_hosts(hosts: Vec<Host>) -> std::result::Result<Vec<StatsdNode>, String> {

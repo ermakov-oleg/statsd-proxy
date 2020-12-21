@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 # common
-async-std = { version = "1.6.5", features = ["attributes"] }
+async-std = { version = "1.8.0", features = ["attributes"] }
 futures = { version="0.3.6", features = ["async-await"]}
 
 # cli

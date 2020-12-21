@@ -9,7 +9,7 @@ use std::str::FromStr;
 use async_std::net::{ToSocketAddrs, UdpSocket};
 use async_std::task;
 use fasthash::murmur3;
-use futures::{channel::mpsc, FutureExt, SinkExt, StreamExt};
+use futures::{channel::mpsc, future, stream, FutureExt, SinkExt, StreamExt};
 use hashring::HashRing;
 use log::{debug, error, warn};
 use structopt::StructOpt;
@@ -36,7 +36,7 @@ pub struct Serve {
 }
 
 pub async fn proxy(params: Serve) -> Result<()> {
-    // todo: graceful shutdown
+    // todo: refactor graceful shutdown
     let nodes = prepare_statsd_hosts(params.statsd_host).await.unwrap();
 
     let (sender, mut receiver) = mpsc::unbounded::<String>();
@@ -86,37 +86,29 @@ async fn send_to_node(node: StatsdNode, metrics: Receiver<String>) -> Result<()>
     let socket = UdpSocket::bind("127.0.0.1:0").await?;
     let mut metrics = metrics.fuse();
 
-    loop {
-        match metrics.next().fuse().await {
-            Some(metric) => {
-                node.send(&socket, metric.as_bytes())
-                    .await
-                    .unwrap_or_else(|e| error!("Error when send stats to {:?} Err: {:?}", node, e));
-            }
-            None => return Ok(()),
-        }
+    while let Some(metric) = metrics.next().fuse().await {
+        node.send(&socket, metric.as_bytes())
+            .await
+            .unwrap_or_else(|e| error!("Error when send stats to {:?} Err: {:?}", node, e));
     }
+
+    Ok(())
 }
 
 async fn listen(addr: impl ToSocketAddrs, mut sender: Sender<String>) -> Result<()> {
     let socket = UdpSocket::bind(addr).await?;
     warn!("Listening on {}", socket.local_addr()?);
 
-    let mut buf = vec![0u8; 1024 * 5];
-
-    // todo: make correct stop
-    'outer: loop {
-        let (recv, _) = socket.recv_from(&mut buf).await?;
-        let chunk = String::from_utf8_lossy(&buf[..recv]);
-        for metric in chunk.split('\n').filter(|&x| !x.is_empty()) {
-            if metric.eq("<stop>") {
-                break 'outer;
-            }
-
-            debug!("Received {:?}", metric);
-            sender.send(metric.parse().unwrap()).await?;
-        }
-    }
+    read_from_socket(socket)
+        .flat_map(move |chunk| {
+            stream::iter(chunk.split('\n').map(str::to_owned).collect::<Vec<_>>())
+        })
+        .filter(|x| future::ready(!x.is_empty()))
+        .take_while(|x| future::ready(x != "<stop>"))
+        .map(Ok)
+        .forward(&mut sender)
+        .await
+        .unwrap();
 
     Ok(())
 }
@@ -184,4 +176,23 @@ impl ToString for StatsdNode {
     fn to_string(&self) -> String {
         format!("{}:{}", self.addrs.ip(), self.addrs.port())
     }
+}
+
+fn read_from_socket(s: UdpSocket) -> impl StreamExt<Item = String> {
+    stream::unfold(s, |s| async {
+        let data = read_chunk(&s).await;
+        Some((data, s))
+    })
+}
+
+async fn read_chunk(s: &UdpSocket) -> String {
+    let mut buf = vec![0; 1024 * 5];
+    let (recv, _) = s
+        .recv_from(&mut buf)
+        .await
+        .expect("Error when read form udp socket");
+
+    let data = String::from_utf8_lossy(&buf[..recv]).into_owned();
+    debug!("Received {:?}", data);
+    return data;
 }

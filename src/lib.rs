@@ -50,13 +50,15 @@ pub async fn proxy(params: Serve) -> Result<()> {
 async fn split_stream(nodes: Vec<StatsdNode>, metrics: &mut Receiver<String>) {
     let mut ring: HashRing<StatsdNode, murmur3::Hash32> = HashRing::with_hasher(murmur3::Hash32);
     let mut sender_map: HashMap<StatsdNode, Sender<String>> = HashMap::new();
+    let mut send_handlers = Vec::new();
 
     for node in nodes {
         let (sender, receiver) = mpsc::unbounded::<String>();
         sender_map.insert(node.clone(), sender);
         ring.add(node.clone());
 
-        let _handle = task::spawn(send_to_node(node, receiver));
+        let handle = task::spawn(send_to_node(node, receiver));
+        send_handlers.push(handle);
     }
 
     let mut metrics = metrics.fuse();
@@ -79,6 +81,11 @@ async fn split_stream(nodes: Vec<StatsdNode>, metrics: &mut Receiver<String>) {
         } else {
             debug!("Invalid metric format {:?}", metric)
         }
+    }
+
+    drop(sender_map);
+    for handle in send_handlers {
+        handle.await.unwrap()
     }
 }
 

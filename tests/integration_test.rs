@@ -1,5 +1,6 @@
 use async_std::net::UdpSocket;
 use async_std::task;
+use rand::Rng;
 use statsd_proxy::{proxy, Host, Serve};
 use std::time::Duration;
 
@@ -41,6 +42,10 @@ async fn test_proxy() -> std::io::Result<()> {
         let handle = task::spawn(async move {
             for i in 0..metrics_count {
                 send_to_socket(18125, format!("some_key_{}:-100|c", i).as_bytes()).await;
+                let num = rand::thread_rng().gen_range(0..100);
+                if num < 10 {
+                    task::sleep(Duration::from_millis(num)).await;
+                };
             }
         });
         send_tasks.push(handle);

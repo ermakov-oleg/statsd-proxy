@@ -130,8 +130,8 @@ async fn prepare_statsd_hosts(hosts: Vec<Host>) -> std::result::Result<Vec<Stats
     let mut nodes = vec![];
 
     for host in hosts {
-        let response = resolver.lookup_ip(&host.host).map_err(|e| e.to_string())?;
         warn!("Resolving {:?}", &host);
+        let response = resolver.lookup_ip(host.host).map_err(|e| e.to_string())?;
         for addr in response {
             warn!("    {:?}", addr);
             nodes.push(StatsdNode::new(SocketAddr::from((addr, host.port))));

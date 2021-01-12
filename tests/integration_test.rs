@@ -30,29 +30,42 @@ async fn test_proxy() -> std::io::Result<()> {
     let server2 = task::spawn(listen(8126));
     let server3 = task::spawn(listen(8127));
 
-    task::sleep(Duration::from_secs(1)).await;
+    task::sleep(Duration::from_millis(500)).await;
 
-    for i in 0..50_000 {
-        send_to_socket(18125, format!("some_key_{}:-100|c", i).as_bytes()).await;
+    let mut send_tasks = vec![];
+
+    let num_tasks = 3;
+    let metrics_count = 30_000;
+
+    for _ in 0..num_tasks {
+        let handle = task::spawn(async move {
+            for i in 0..metrics_count {
+                send_to_socket(18125, format!("some_key_{}:-100|c", i).as_bytes()).await;
+            }
+        });
+        send_tasks.push(handle);
     }
+
+    for handle in send_tasks {
+        handle.await
+    }
+
     send_to_socket(18125, "<stop>".as_ref()).await;
 
     let _ = proxy_handle.await;
+
+    task::sleep(Duration::from_secs(1)).await;
 
     send_to_socket(8125, "<stop>".as_ref()).await;
     send_to_socket(8126, "<stop>".as_ref()).await;
     send_to_socket(8127, "<stop>".as_ref()).await;
 
-    let results1 = server1.await;
-    let results2 = server2.await;
-    let results3 = server3.await;
+    let count: u64 = futures::future::join_all(vec![server1, server2, server3])
+        .await
+        .iter()
+        .sum();
 
-    assert_eq!(results1.len() + results2.len() + results3.len(), 50_000);
-
-    assert_eq!(results1.len(), 11988);
-    assert_eq!(results2.len(), 21179);
-    assert_eq!(results3.len(), 16833);
-
+    assert_eq!(count, metrics_count * num_tasks);
     Ok(())
 }
 
@@ -64,26 +77,25 @@ async fn send_to_socket(port: u16, buf: &[u8]) {
         .unwrap();
 }
 
-async fn listen(port: u16) -> Vec<String> {
+async fn listen(port: u16) -> u64 {
     let socket = UdpSocket::bind(format!("127.0.0.1:{}", port))
         .await
         .unwrap();
     let mut buf = vec![0u8; 1024 * 5];
-    let mut data: Vec<String> = vec![];
+    let mut count: u64 = 0;
 
     let mut stop = false;
 
     while !stop {
         let (recv, _) = socket.recv_from(&mut buf).await.unwrap();
-        let chunk = String::from_utf8_lossy(&buf[..recv]);
-        for metric in chunk.split('\n').filter(|&x| !x.is_empty()) {
-            if metric.eq("<stop>") {
-                stop = true
-            } else {
-                data.push(metric.parse().unwrap())
-            }
+        if &buf[..recv] == b"<stop>" {
+            stop = true
+        } else {
+            count += &buf[..recv]
+                .iter()
+                .fold(0, |acc, &x| if x == b':' { acc + 1 } else { acc });
         }
     }
 
-    data
+    count
 }

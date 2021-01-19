@@ -5,11 +5,12 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::time::Duration;
 
 use async_std::net::{ToSocketAddrs, UdpSocket};
 use async_std::task;
 use fasthash::murmur3;
-use futures::{channel::mpsc, future, stream, FutureExt, SinkExt, StreamExt};
+use futures::{channel::mpsc, future, select, stream, FutureExt, SinkExt, StreamExt};
 use hashring::HashRing;
 use log::{debug, error, warn};
 use structopt::StructOpt;
@@ -33,6 +34,10 @@ pub struct Serve {
     /// List of statsd hosts (host:port)
     #[structopt(short, long)]
     pub statsd_host: Vec<Host>,
+
+    /// Max udp paket size
+    #[structopt(short, long, default_value = "1024")]
+    pub mtu: usize,
 }
 
 pub async fn proxy(params: Serve) -> Result<()> {
@@ -42,12 +47,12 @@ pub async fn proxy(params: Serve) -> Result<()> {
     let (sender, mut receiver) = mpsc::unbounded::<String>();
     let _listen_handle = task::spawn(listen(format!("{}:{}", params.host, params.port), sender));
 
-    split_stream(nodes, receiver.borrow_mut()).await;
+    split_stream(nodes, receiver.borrow_mut(), params.mtu).await;
 
     Ok(())
 }
 
-async fn split_stream(nodes: Vec<StatsdNode>, metrics: &mut Receiver<String>) {
+async fn split_stream(nodes: Vec<StatsdNode>, metrics: &mut Receiver<String>, mtu: usize) {
     let mut ring: HashRing<StatsdNode, murmur3::Hash32> = HashRing::with_hasher(murmur3::Hash32);
     let mut sender_map: HashMap<StatsdNode, Sender<String>> = HashMap::new();
     let mut send_handlers = Vec::new();
@@ -57,7 +62,7 @@ async fn split_stream(nodes: Vec<StatsdNode>, metrics: &mut Receiver<String>) {
         sender_map.insert(node.clone(), sender);
         ring.add(node.clone());
 
-        let handle = task::spawn(send_to_node(node, receiver));
+        let handle = task::spawn(send_to_node(node, receiver, mtu));
         send_handlers.push(handle);
     }
 
@@ -89,15 +94,42 @@ async fn split_stream(nodes: Vec<StatsdNode>, metrics: &mut Receiver<String>) {
     }
 }
 
-async fn send_to_node(node: StatsdNode, metrics: Receiver<String>) -> Result<()> {
+async fn send_to_node(node: StatsdNode, metrics: Receiver<String>, mtu: usize) -> Result<()> {
     let socket = UdpSocket::bind("127.0.0.1:0").await?;
     let mut metrics = metrics.fuse();
 
-    while let Some(metric) = metrics.next().fuse().await {
-        node.send(&socket, metric.as_bytes())
-            .await
-            .unwrap_or_else(|e| error!("Error when send stats to {:?} Err: {:?}", node, e));
+    let flush_interval = Duration::from_millis(500);
+
+    let mut buf: Vec<u8> = vec![0; 1024 * 5];
+
+    loop {
+        select! {
+            metric = metrics.next().fuse() => match metric {
+                Some(metric) => {
+                    if metric.len() + buf.len() + 1 >= mtu {
+                        node.send(&socket, &buf).await;
+
+                        buf.clear();
+                        buf.extend(metric.bytes());
+
+                    } else {
+                        buf.push(b'\n');
+                        buf.extend(metric.bytes());
+                    }
+                },
+                None => break,
+            },
+            _ = task::sleep(flush_interval).fuse() => {
+                if !buf.is_empty() {
+                    node.send(&socket, &buf).await;
+
+                    buf.clear();
+                }
+            }
+        }
     }
+
+    node.send(&socket, &buf).await;
 
     Ok(())
 }
@@ -173,9 +205,11 @@ impl StatsdNode {
         Self { addrs }
     }
 
-    async fn send(&self, socket: &UdpSocket, buf: &[u8]) -> std::io::Result<()> {
-        socket.send_to(buf, self.addrs).await?;
-        Ok(())
+    async fn send(&self, socket: &UdpSocket, buf: &[u8]) {
+        let _ = socket
+            .send_to(buf, self.addrs)
+            .await
+            .map_err(|e| error!("Error when send stats to {:?} Err: {:?}", &self, e));
     }
 }
 

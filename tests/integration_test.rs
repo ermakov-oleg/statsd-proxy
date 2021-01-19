@@ -11,6 +11,7 @@ async fn test_proxy() -> std::io::Result<()> {
     let proxy_handle = task::spawn(proxy(Serve {
         host: "0.0.0.0".to_string(),
         port: 18125,
+        mtu: 1024,
         statsd_host: vec![
             Host {
                 host: "127.0.0.1".to_string(),

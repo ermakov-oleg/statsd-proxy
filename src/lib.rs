@@ -43,16 +43,22 @@ pub struct Serve {
 pub async fn proxy(params: Serve) -> Result<()> {
     // todo: refactor graceful shutdown
     let nodes = prepare_statsd_hosts(params.statsd_host).await.unwrap();
+    let addr = format!("{}:{}", params.host, params.port);
 
     let (sender, mut receiver) = mpsc::unbounded::<String>();
-    let _listen_handle = task::spawn(listen(format!("{}:{}", params.host, params.port), sender));
+    let _listen_handle = task::spawn(listen(addr, sender));
 
-    split_stream(nodes, receiver.borrow_mut(), params.mtu).await;
+    split_stream(nodes, receiver.borrow_mut(), params.host, params.mtu).await;
 
     Ok(())
 }
 
-async fn split_stream(nodes: Vec<StatsdNode>, metrics: &mut Receiver<String>, mtu: usize) {
+async fn split_stream(
+    nodes: Vec<StatsdNode>,
+    metrics: &mut Receiver<String>,
+    host: String,
+    mtu: usize,
+) {
     let mut ring: HashRing<StatsdNode, murmur3::Hash32> = HashRing::with_hasher(murmur3::Hash32);
     let mut sender_map: HashMap<StatsdNode, Sender<String>> = HashMap::new();
     let mut send_handlers = Vec::new();
@@ -62,7 +68,7 @@ async fn split_stream(nodes: Vec<StatsdNode>, metrics: &mut Receiver<String>, mt
         sender_map.insert(node.clone(), sender);
         ring.add(node.clone());
 
-        let handle = task::spawn(send_to_node(node, receiver, mtu));
+        let handle = task::spawn(send_to_node(node, receiver, host.clone(), mtu));
         send_handlers.push(handle);
     }
 
@@ -94,13 +100,18 @@ async fn split_stream(nodes: Vec<StatsdNode>, metrics: &mut Receiver<String>, mt
     }
 }
 
-async fn send_to_node(node: StatsdNode, metrics: Receiver<String>, mtu: usize) -> Result<()> {
-    let socket = UdpSocket::bind("127.0.0.1:0").await?;
+async fn send_to_node(
+    node: StatsdNode,
+    metrics: Receiver<String>,
+    host: String,
+    mtu: usize,
+) -> Result<()> {
+    let socket = UdpSocket::bind(format!("{}:0", host)).await?;
     let mut metrics = metrics.fuse();
 
     let flush_interval = Duration::from_millis(500);
 
-    let mut buf: Vec<u8> = vec![0; 1024 * 5];
+    let mut buf: Vec<u8> = Vec::with_capacity(mtu * 2);
 
     loop {
         select! {
@@ -113,8 +124,8 @@ async fn send_to_node(node: StatsdNode, metrics: Receiver<String>, mtu: usize) -
                         buf.extend(metric.bytes());
 
                     } else {
-                        buf.push(b'\n');
                         buf.extend(metric.bytes());
+                        buf.push(b'\n');
                     }
                 },
                 None => break,
@@ -206,6 +217,11 @@ impl StatsdNode {
     }
 
     async fn send(&self, socket: &UdpSocket, buf: &[u8]) {
+        debug!(
+            "Send to {} -> {:?}",
+            self.addrs,
+            String::from_utf8_lossy(&buf)
+        );
         let _ = socket
             .send_to(buf, self.addrs)
             .await

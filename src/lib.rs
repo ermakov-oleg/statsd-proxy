@@ -59,14 +59,19 @@ async fn split_stream(
     host: String,
     mtu: usize,
 ) {
-    let mut ring: HashRing<StatsdNode, murmur3::Hash32> = HashRing::with_hasher(murmur3::Hash32);
+    let mut ring: HashRing<(StatsdNode, i32), murmur3::Hash32> =
+        HashRing::with_hasher(murmur3::Hash32);
     let mut sender_map: HashMap<StatsdNode, Sender<String>> = HashMap::new();
     let mut send_handlers = Vec::new();
 
     for node in nodes {
         let (sender, receiver) = mpsc::unbounded::<String>();
         sender_map.insert(node.clone(), sender);
-        ring.add(node.clone());
+
+        // insert fake nodes for a more even distribution
+        for i in 0..100 {
+            ring.add((node.clone(), i));
+        }
 
         let handle = task::spawn(send_to_node(node, receiver, host.clone(), mtu));
         send_handlers.push(handle);
@@ -79,7 +84,7 @@ async fn split_stream(
             let key = &metric[..key_size];
 
             match ring.get(&key) {
-                Some(n) => {
+                Some((n, _)) => {
                     debug!("[node] {:?} | key -> {:?}", n, &key);
 
                     match sender_map.get(n) {
